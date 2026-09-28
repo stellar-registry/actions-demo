@@ -1,0 +1,172 @@
+name: Release
+
+# Version bump -> tag -> attested build -> registry publish, all through the
+# shared stellar-registry/actions reusable workflows (pinned by sha, the same
+# shape stellar-registry/perch runs):
+#
+#   1. `release-pr` (push to main): git-cliff reads the conventional commits
+#      under crates/actions-demo and keeps one "chore: release" PR open with
+#      the next version + changelog. Merging it is the version bump.
+#   2. `detect-releases` (push to main): tags `actions-demo-v<version>` when
+#      the crate manifest carries a version that has no tag yet.
+#   3. `build`: contract-release.yml runs `stellar scaffold build` +
+#      `stellar contract optimize`, creates the GitHub release holding
+#      `actions-demo_v<version>.wasm`, submits the hash to stellar.expert
+#      contract validation and signs GitHub build provenance for the asset.
+#   4. `publish`: registry-publish.yml verifies that provenance and the wasm's
+#      `binver` meta, uploads the code, and binds name -> hash -> author with
+#      `publish_hash`. The author is a nido smart account (vars.AUTHOR_ADDRESS);
+#      the signer is the CI publish key (secrets.CI_PUBLISH_SECRET_KEY), which
+#      the account's policy document only lets call `publish_hash` on
+#      vars.REGISTRY_CONTRACT_ID, for this wasm name, with itself as author.
+#      The same key pays the fees. See the README for the key and the policy.
+#
+# The build/publish jobs hang off detect-releases with `needs:` in the SAME
+# run, because tags pushed with the default GITHUB_TOKEN never trigger another
+# workflow run. No GitHub App is needed.
+#
+# Bootstrap: the target registry must be unmanaged (manager() == None), as the
+# testnet unverified registry is, so the first CI publish claims the wasm name
+# for the smart account. Every later version needs only the author's
+# signature, which is the CI key under its rule. Set up the key, the rule and
+# the repo vars/secret with the dapp in app/ (GitHub Pages), then merge.
+
+on:
+  push:
+    branches: [main]
+  # Recovery, publish only: re-run the on-chain half against an existing,
+  # already-attested release asset (for example after an RPC failure). It never
+  # rebuilds; integrity comes from `gh attestation verify`, not from git
+  # position.
+  workflow_dispatch:
+    inputs:
+      publish_tag:
+        description: "Existing release tag to (re)publish, e.g. actions-demo-v0.1.0"
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.event_name == 'workflow_dispatch' && format('release-dispatch-{0}', inputs.publish_tag) || format('release-{0}', github.ref) }}
+  cancel-in-progress: false
+
+jobs:
+  release-pr:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+      pull-requests: write
+    uses: stellar-registry/actions/.github/workflows/release-pr.yml@7152f7c264fcba286f01d372cb540d3b19c22834 # main 2026-09
+    with:
+      contracts: '[{"name": "actions-demo"}]'
+
+  detect-releases:
+    if: github.event_name == 'push'
+    permissions:
+      contents: write # create + push the release tag
+    uses: stellar-registry/actions/.github/workflows/detect-releases.yml@7152f7c264fcba286f01d372cb540d3b19c22834 # main 2026-09
+    with:
+      contracts: '[{"name": "actions-demo"}]'
+
+  # Which tags does this run publish? Emits the matrix the build and publish
+  # jobs fan out over; empty means nothing was released.
+  publish-plan:
+    needs: detect-releases
+    # !cancelled(): on dispatch detect-releases is skipped, which would
+    # otherwise skip everything downstream of this `needs:`.
+    if: >-
+      !cancelled() && (
+        (github.event_name == 'workflow_dispatch' && inputs.publish_tag != '') ||
+        (github.event_name == 'push' && needs.detect-releases.outputs.releases_created == 'true')
+      )
+    runs-on: ubuntu-latest
+    permissions: {}
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      any: ${{ steps.plan.outputs.any }}
+    env:
+      RELEASES: ${{ needs.detect-releases.outputs.releases }}
+      DISPATCH_TAG: ${{ inputs.publish_tag }}
+    steps:
+      - name: Build the publish matrix
+        id: plan
+        # Strict allow-list regex: the tag and the version parsed from it flow
+        # into the reusable workflows' `run:` shells.
+        run: |
+          set -euo pipefail
+          if [ -n "$DISPATCH_TAG" ]; then
+            if [[ "$DISPATCH_TAG" =~ ^(actions-demo)-v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+              matrix=$(jq -cn --arg p "${BASH_REMATCH[1]}" --arg t "$DISPATCH_TAG" --arg v "${BASH_REMATCH[2]}" \
+                '[{package: $p, tag: $t, version: $v}]')
+            else
+              echo "publish_tag '$DISPATCH_TAG' is not an actions-demo-v<semver> tag" >&2
+              exit 1
+            fi
+          else
+            matrix=$(jq -c '[.[] | select(.tag | test("^actions-demo-v[0-9]+\\.[0-9]+\\.[0-9]+$"))
+              | {package: .package_name, tag: .tag, version: .version}]' <<<"$RELEASES")
+          fi
+          n=$(jq length <<<"$matrix")
+          {
+            echo "matrix={\"include\":$matrix}"
+            echo "any=$([ "$n" -gt 0 ] && echo true || echo false)"
+          } >>"$GITHUB_OUTPUT"
+
+  # Push only: contract-release has no ref input and builds this run's sha,
+  # which on push is the commit detect-releases just tagged. A dispatch
+  # republishes the existing asset instead.
+  build:
+    needs: publish-plan
+    if: >-
+      !cancelled() && needs.publish-plan.outputs.any == 'true' &&
+      github.event_name == 'push'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.publish-plan.outputs.matrix) }}
+    permissions:
+      id-token: write
+      contents: write
+      attestations: write
+    uses: stellar-registry/actions/.github/workflows/contract-release.yml@7152f7c264fcba286f01d372cb540d3b19c22834 # main 2026-09
+    with:
+      package: ${{ matrix.package }}
+      release_name: ${{ matrix.tag }}
+      release_description: >-
+        Attested build of ${{ matrix.package }} ${{ matrix.version }}, published
+        to the Stellar Registry on testnet by this repo's CI publish key (see
+        the attached publish receipt).
+    secrets:
+      release_token: ${{ secrets.GITHUB_TOKEN }}
+
+  publish:
+    needs: [publish-plan, build]
+    if: >-
+      !cancelled() && needs.publish-plan.outputs.any == 'true' && (
+        needs.build.result == 'success' ||
+        (github.event_name == 'workflow_dispatch' && needs.build.result == 'skipped')
+      )
+    strategy:
+      fail-fast: false
+      # Every leg signs with the same key, which is also the tx source: parallel
+      # legs would collide on its sequence number.
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.publish-plan.outputs.matrix) }}
+    permissions:
+      contents: write # download the asset + attach the receipt
+      id-token: write # gh attestation verify
+    uses: stellar-registry/actions/.github/workflows/registry-publish.yml@7152f7c264fcba286f01d372cb540d3b19c22834 # main 2026-09
+    with:
+      registry: ${{ vars.REGISTRY_CONTRACT_ID }}
+      author: ${{ vars.AUTHOR_ADDRESS }}
+      wasm_name: ${{ matrix.package }}
+      version: ${{ matrix.version }}
+      release_tag: ${{ matrix.tag }}
+      wasm_asset: ${{ matrix.package }}_v${{ matrix.version }}.wasm
+      network: testnet
+      # deploy_stateless exists only on content-addressed (perch-style)
+      # registries; the standard registry just records the publish.
+      deploy: false
+    secrets:
+      signing_key: ${{ secrets.CI_PUBLISH_SECRET_KEY }}
+      release_token: ${{ secrets.GITHUB_TOKEN }}
