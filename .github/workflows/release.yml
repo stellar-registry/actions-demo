@@ -40,9 +40,7 @@ name: Release
 
 on:
   push:
-    # TEMP (reverted before review): also release from the PR branch so the
-    # pre-merge proof runs against testnet.
-    branches: [main, fm/registry-actions-demo-d11]
+    branches: [main]
   # By hand, two modes:
   # - no publish_tag, on main: release now. Tags and publishes any manifest
   #   version without a tag (a contract's first release).
@@ -96,13 +94,6 @@ jobs:
           REF: ${{ github.ref }}
         run: |
           set -euo pipefail
-          # TEMP (reverted before review): the pre-merge proof releases from
-          # the PR branch, where no release PR can merge.
-          if [ "$REF" = refs/heads/fm/registry-actions-demo-d11 ]; then
-            echo "is_release=true" >>"$GITHUB_OUTPUT"
-            echo "release: true (TEMP pre-merge proof on the PR branch)" >>"$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
           if [ "$EVENT" = workflow_dispatch ]; then
             if [ "$REF" != refs/heads/main ]; then
               echo "::error::manual releases run from main only (got $REF)"
