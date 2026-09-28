@@ -19,12 +19,13 @@ name: Release
 #      `actions-demo_v<version>.wasm`, submits the hash to stellar.expert
 #      contract validation and signs GitHub build provenance for the asset.
 #   4. `publish`: registry-publish.yml verifies that provenance and the wasm's
-#      `binver` meta, uploads the code, and binds name -> hash -> author with
-#      `publish_hash`. The author is a nido smart account (vars.AUTHOR_ADDRESS);
-#      the signer is the CI publish key (secrets.CI_PUBLISH_SECRET_KEY), which
-#      the account's policy document only lets call `publish_hash` on
-#      vars.REGISTRY_CONTRACT_ID, for this wasm name, with itself as author.
-#      The same key pays the fees. See the README for the key and the policy.
+#      `binver` meta, then binds name -> code -> author with one `publish`
+#      call (a wasm over 60 KiB falls back to upload + `publish_hash`). The
+#      author is a nido smart account (vars.AUTHOR_ADDRESS); the signer is the
+#      CI publish key (secrets.CI_PUBLISH_SECRET_KEY), which the account's
+#      policy document only lets call `publish` on vars.REGISTRY_CONTRACT_ID,
+#      for this wasm name, with itself as author. The same key pays the fees.
+#      See the README for the key and the policy.
 #
 # The build/publish jobs hang off detect-releases with `needs:` in the SAME
 # run, because tags pushed with the default GITHUB_TOKEN never trigger another
@@ -209,7 +210,10 @@ jobs:
     permissions:
       contents: write # download the asset + attach the receipt
       id-token: write # gh attestation verify
-    uses: stellar-registry/actions/.github/workflows/registry-publish.yml@7152f7c264fcba286f01d372cb540d3b19c22834 # main 2026-09
+    # PRE-MERGE PIN: head of stellar-registry/actions#15 (publish when the wasm
+    # fits, publish_hash only when too big). Move to the merged main sha of
+    # that PR before merging this repo's PR.
+    uses: stellar-registry/actions/.github/workflows/registry-publish.yml@7076ce9a2aef4d84910530def5a0b4d7395bb80b # actions#15 head
     with:
       registry: ${{ vars.REGISTRY_CONTRACT_ID }}
       author: ${{ vars.AUTHOR_ADDRESS }}
