@@ -2,8 +2,8 @@
 
 A working demo of the Stellar Registry release pipeline from
 [stellar-registry/actions](https://github.com/stellar-registry/actions), running
-on testnet. A merged version bump tags, builds, attests and publishes a Soroban
-contract to the Registry. The publish is signed by a CI key that can call
+on testnet. Merged changes collect in one release PR; merging that PR tags,
+builds, attests and publishes a Soroban contract to the Registry. The publish is signed by a CI key that can call
 `publish_hash` on one registry for one wasm name and nothing else. You
 provision that key with a [nido](https://nido.fyi) smart-account wallet from
 this repo's GitHub Pages dapp:
@@ -39,6 +39,18 @@ flowchart LR
 
 All four jobs are stellar-registry/actions reusable workflows, pinned to commit
 `7152f7c` the way [perch](https://github.com/stellar-registry/perch) pins them.
+
+Publishing is a manual decision. Every push to `main` runs `release-pr`, which
+keeps one `chore: release` PR open with the next version and changelog,
+computed by git-cliff from the conventional commits under the contract's
+crate. Several merged changes therefore go out together as one version. A
+`release-gate` job lets `detect-releases` run only when the push is that
+release PR (`release/next`) merging, which it checks through the GitHub API
+that maps a commit to its pull request. Any other push publishes nothing, even
+one that bumped a version by hand. The exception is a contract's first
+version: with no tag yet, git-cliff has nothing to bump from and proposes no
+release PR. You release it by running the Release workflow by hand on `main`
+with no `publish_tag`.
 The build and publish jobs hang off `detect-releases` with `needs:` in the same
 run, because tags pushed with `GITHUB_TOKEN` don't start new workflow runs, so
 no GitHub App is needed.
@@ -223,7 +235,9 @@ and secret to set.
 
 Both runs executed from the PR branch before merge. For the proof, the release
 and Pages workflows temporarily triggered on that branch too; the trigger was
-removed again before review. Each release carries the attested wasm and the
+removed again before review. The runs used a hand-bumped version and predate
+the release gate. On `main`, only a release PR merge or a manual run
+publishes. Each release carries the attested wasm and the
 `publish-receipt.json` that `registry-publish.yml` attaches.
 
 Check the registry yourself:
@@ -254,15 +268,16 @@ stellar contract invoke --network testnet --send=no \
    Actions must be allowed to create pull requests (Settings → Actions →
    General) for `release-pr`, and Pages must use "GitHub Actions" as its source
    for `pages.yml`.
-4. **Bootstrap.** Nothing extra on an unmanaged registry: the first CI publish
-   claims the name for your account, and later versions need only the
-   account's signature, which the CI key gives under its rule. On a managed
-   registry, have the manager publish a first version with your account as
-   author.
-5. **Release.** Merge the `chore: release` PR that `release-pr` opens, or bump
-   `version` yourself. The push to `main` does the rest. To re-publish an
-   existing, already-attested release after a failure, run the workflow by
-   hand with `publish_tag`.
+4. **First version.** Merge the contract with the version you want to start
+   at, then run the Release workflow by hand on `main` (Actions → Release →
+   Run workflow, `publish_tag` empty). On an unmanaged registry that first CI
+   publish claims the name for your account. On a managed registry, have the
+   manager publish a first version with your account as author instead.
+5. **Every later version.** Merge changes to `main` as usual; `release-pr`
+   keeps the `chore: release` PR up to date. Merging that PR is the release:
+   it tags, builds, attests and publishes. To re-publish an existing,
+   already-attested release after a failure, run the workflow by hand with
+   `publish_tag`.
 
 Merge PRs here with a merge commit rather than a squash, so release tags made
 on a branch stay reachable from `main` for git-cliff.
