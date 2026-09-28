@@ -6,7 +6,9 @@ name: Pages
 
 on:
   push:
-    branches: [main]
+    # TEMP (reverted before review): also deploy from the PR branch so the
+    # pre-merge proof has a live page.
+    branches: [main, fm/registry-actions-demo-d11]
     paths: ["app/**", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
