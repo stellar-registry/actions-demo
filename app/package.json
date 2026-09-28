@@ -12,8 +12,8 @@
   },
   "dependencies": {
     "@stellar-registry/perch": "^0.3.0",
-    "@stellar/stellar-sdk": "^15.1.0",
-    "astro": "^5.18.2",
+    "@stellar/stellar-sdk": "^16.3.0",
+    "astro": "^7.3.5",
     "buffer": "^6.0.3"
   },
   "devDependencies": {
