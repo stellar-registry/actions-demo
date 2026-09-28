@@ -39,7 +39,7 @@ const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
         <h1>A CI key that can <em>only</em> publish.</h1>
         <p>
           Your nido wallet adds a new key to its policy document. The key may call
-          <code>publish_hash</code> on one registry, for the wasm names you list, with your
+          <code>publish</code> on one registry, for the wasm names you list, with your
           account as the author. It can't publish anything
           else, and it has no say over the account's funds or policy. Put its secret in GitHub
           Actions and releases publish themselves.
@@ -61,6 +61,14 @@ const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
             <input class="input mono" id="names" spellcheck="false" autocomplete="off" />
             <div class="hint">Comma-separated. The release workflow publishes the crate name, <code>actions-demo</code>.</div>
           </div>
+          <label class="check">
+            <input type="checkbox" id="allow-hash" />
+            <span>
+              Also allow <code>publish_hash</code>. Only needed for a wasm over 60 KiB, which is
+              too big to <code>publish</code> in one transaction; the workflow then uploads it
+              first and binds its hash.
+            </span>
+          </label>
           <div class="row"><button class="btn acc" id="check-registry">Check registry</button></div>
           <dl class="facts hidden" id="registry-facts" style="margin-top:16px"></dl>
           <p class="status" id="registry-status"></p>
@@ -177,12 +185,13 @@ const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
           <li><strong>release-pr</strong> proposes the next version from conventional commits.</li>
           <li><strong>detect-releases</strong> tags <code>actions-demo-v&lt;version&gt;</code> when that version lands on main.</li>
           <li><strong>contract-release</strong> builds with <code>stellar scaffold build</code>, creates the GitHub release, and signs build provenance.</li>
-          <li><strong>registry-publish</strong> verifies the provenance and the wasm's <code>binver</code>, then uploads it and calls <code>publish_hash</code> as your account, signed by this key.</li>
+          <li><strong>registry-publish</strong> verifies the provenance and the wasm's <code>binver</code>, then calls <code>publish</code> with the wasm as your account, signed by this key. A wasm over 60 KiB is uploaded first and bound with <code>publish_hash</code> instead.</li>
         </ol>
         <p>
           The key is registered as <code>External(ed25519 verifier, public key)</code> on a rule
           scoped to the registry. perch's interpreter policy on that rule checks every call: the
-          function must be <code>publish_hash</code>, argument 0 (the name) must be one you listed,
+          function must be <code>publish</code> (or <code>publish_hash</code>, if you allowed it),
+          argument 0 (the name) must be one you listed,
           and argument 1 (the author) must be the account itself. If the secret leaks, the worst
           case is someone publishing a version of your listed wasm names with code you didn't
           build. It shows up on-chain without a matching attested GitHub release, and running

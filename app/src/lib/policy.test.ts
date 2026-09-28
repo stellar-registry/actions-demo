@@ -34,7 +34,7 @@ describe('adminBaseline', () => {
 });
 
 describe('upsertPublishKey', () => {
-  it('adds the key and a publish_hash-only rule pinned to name and author', () => {
+  it('adds the key and a publish-only rule pinned to name and author', () => {
     const doc = upsertPublishKey(baseline(), key(KEY_A), NETWORK_PASSPHRASE);
     expect(doc.signers).toContainEqual({ id: RULE_NAME, verifier: ED25519, key: KEY_A });
     const rule = doc.rules.find((r) => r.name === RULE_NAME);
@@ -42,7 +42,7 @@ describe('upsertPublishKey', () => {
       name: RULE_NAME,
       scope: { type: 'contract', address: REGISTRY },
       principals: { type: 'all', signers: [RULE_NAME] },
-      functions: ['publish_hash'],
+      functions: ['publish'],
       args: [
         { index: 0, pred: { type: 'string-in', values: ['actions-demo'] } },
         { index: 1, pred: { type: 'is-self' } },
@@ -50,6 +50,11 @@ describe('upsertPublishKey', () => {
     });
     // The admin rule survives: apply_doc refuses a document without one.
     expect(doc.rules.find((r) => r.name === 'admin')).toBeDefined();
+  });
+
+  it('allows publish_hash only when opted in (wasms too big to publish)', () => {
+    const doc = upsertPublishKey(baseline(), { ...key(KEY_A), allowPublishHash: true }, NETWORK_PASSPHRASE);
+    expect(doc.rules.find((r) => r.name === RULE_NAME)?.functions).toEqual(['publish', 'publish_hash']);
   });
 
   it('rotates: a second key replaces the first and drops its declaration', () => {

@@ -96,6 +96,7 @@ const recall = (k: string) => {
 
 let registry = '';
 let wasmNames: string[] = [];
+let allowPublishHash = false;
 let verifier = { address: '', resolved: false };
 let account = '';
 let policy: AccountPolicy | null = null;
@@ -127,6 +128,7 @@ async function checkRegistry() {
   const [info, ver] = await Promise.all([readRegistry(reg, names), resolveEd25519Verifier()]);
   registry = reg;
   wasmNames = names;
+  allowPublishHash = input('allow-hash').checked;
   verifier = ver;
   remember('registry', reg);
   remember('names', names.join(', '));
@@ -139,6 +141,7 @@ async function checkRegistry() {
       info.versions[n] ? `published, current version ${info.versions[n]}` : 'not published yet: the first CI publish claims it for your account',
     ]),
     ['ed25519 verifier', h('span', {}, contractLink(ver.address), ver.resolved ? ' (resolved by name)' : ' (pinned fallback)')],
+    ['Key may call', code(allowPublishHash ? 'publish, publish_hash' : 'publish')],
   ]);
   status(
     'registry-status',
@@ -148,6 +151,7 @@ async function checkRegistry() {
   );
   input('registry').readOnly = true;
   input('names').readOnly = true;
+  input('allow-hash').disabled = true;
   $<HTMLButtonElement>('check-registry').classList.add('hidden');
   step('step-registry', 'done');
   step('step-wallet', 'active');
@@ -233,7 +237,7 @@ function ruleCard(r: PolicyDoc['rules'][number], cls: string, verb: string): HTM
       h(
         'ul',
         {},
-        h('li', {}, 'function must be ', code('publish_hash')),
+        h('li', {}, 'function must be ', code('publish'), ...(allowPublishHash ? [' or ', code('publish_hash')] : [])),
         h('li', {}, 'argument 0 (wasm name) must be one of ', code(wasmNames.join(', '))),
         h('li', {}, 'argument 1 (author) must be this account'),
         h('li', {}, 'checked on every call by the perch interpreter policy'),
@@ -252,6 +256,7 @@ function renderReview() {
       wasmNames,
       verifier: verifier.address,
       publicKeyHex: Buffer.from(Keypair.fromPublicKey(publicKey).rawPublicKey()).toString('hex'),
+      allowPublishHash,
     },
     NETWORK_PASSPHRASE,
   );

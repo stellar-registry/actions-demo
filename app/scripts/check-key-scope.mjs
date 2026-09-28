@@ -133,9 +133,9 @@ const rule = await findRule().catch((e) => {
 });
 const fresh = () => xdr.ScVal.scvBytes(Buffer.from(crypto.getRandomValues(new Uint8Array(32))));
 const cases = [
-  ['publish_hash, allowed name, author = account (expected: AUTHORIZED)', registry, 'publish_hash', [str(wasmName), addr(account), fresh(), str('999.0.0')]],
-  ['publish_hash, another name', registry, 'publish_hash', [str(`${wasmName}-other`), addr(account), fresh(), str('999.0.0')]],
-  ['publish (wasm bytes), not in the rule', registry, 'publish', [str(wasmName), addr(account), await freshWasm(), str('999.0.0')]],
+  ['publish, allowed name, author = account (expected: AUTHORIZED)', registry, 'publish', [str(wasmName), addr(account), await freshWasm(), str('999.0.0')]],
+  ['publish, another name', registry, 'publish', [str(`${wasmName}-other`), addr(account), await freshWasm(), str('999.0.0')]],
+  ['publish_hash (authorized only if the rule opted in for wasms over 60 KiB)', registry, 'publish_hash', [str(wasmName), addr(account), fresh(), str('999.0.0')]],
   ['XLM transfer out of the account', NATIVE_SAC, 'transfer', [addr(account), addr(key.publicKey()), nativeToScVal(1n, { type: 'i128' })]],
   // Re-applying the account's own current document: valid input, so only auth decides.
   ['apply_doc (rewrite the account policy)', account, 'apply_doc', [xdr.ScVal.scvBytes(Buffer.from(await view(account, 'get_applied_doc')))]],

@@ -18,11 +18,17 @@ export const DEFAULT_WASM_NAME = 'actions-demo';
 /** Rule name and signer id the dapp writes into the policy document. */
 export const RULE_NAME = 'ci-publish';
 
-/** The only registry function the CI key may call. stellar-registry/actions
- *  registry-publish.yml uploads the code with a plain host-function op (no
- *  smart-account auth) and then binds name -> hash -> author with
- *  `publish_hash`, so that is all the rule allows. */
-export const PUBLISH_FUNCTIONS = ['publish_hash'] as const;
+/** stellar-registry/actions registry-publish.yml publishes a wasm with one
+ *  `publish(name, author, wasm, version)` call, which the author signs over
+ *  the wasm bytes themselves. So `publish` is all the rule allows by default. */
+export const PUBLISH_FUNCTION = 'publish';
+
+/** A wasm over registry-publish's `publish_max_wasm_bytes` (60 KiB) doesn't
+ *  fit in one transaction with `publish`, so the workflow uploads it with a
+ *  plain host-function op (no smart-account auth) and binds it with
+ *  `publish_hash`. The rule allows that only when the user opts in. */
+export const LARGE_WASM_FUNCTION = 'publish_hash';
+export const LARGE_WASM_BYTES = 61440;
 
 /** perch's ed25519 verifier: `Signer::External(verifier, pubkey)` checks a
  *  raw ed25519 signature over the auth digest. Resolved at runtime as

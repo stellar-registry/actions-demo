@@ -8,7 +8,7 @@
 
 import { parsePolicyDoc, requestToPolicyDoc } from '@stellar-registry/perch';
 import type { PolicyDoc } from '@stellar-registry/perch';
-import { PUBLISH_FUNCTIONS, RULE_NAME } from './config';
+import { LARGE_WASM_FUNCTION, PUBLISH_FUNCTION, RULE_NAME } from './config';
 
 type SignerDecl = PolicyDoc['signers'][number];
 type Rule = PolicyDoc['rules'][number];
@@ -40,17 +40,26 @@ export interface PublishKey {
   verifier: string;
   /** 32-byte ed25519 public key of the CI key, hex. */
   publicKeyHex: string;
+  /** Also allow `publish_hash`, which registry-publish needs only for a wasm
+   *  too big to `publish` in one transaction. */
+  allowPublishHash?: boolean;
 }
 
-/** The publish-only rule, as a doc rule. Arg 0 of `publish_hash` is the wasm
- *  name and arg 1 the author; pinning the author to the account itself means
- *  the key can only ever publish AS this account. */
-export function publishRule(registry: string, wasmNames: string[], signerId: string): Rule {
+/** The publish-only rule, as a doc rule. For both `publish` and
+ *  `publish_hash`, arg 0 is the wasm name and arg 1 the author; pinning the
+ *  author to the account itself means the key can only ever publish AS this
+ *  account. */
+export function publishRule(
+  registry: string,
+  wasmNames: string[],
+  signerId: string,
+  allowPublishHash = false,
+): Rule {
   return {
     name: RULE_NAME,
     scope: { type: 'contract', address: registry },
     principals: { type: 'all', signers: [signerId] },
-    functions: [...PUBLISH_FUNCTIONS],
+    functions: allowPublishHash ? [PUBLISH_FUNCTION, LARGE_WASM_FUNCTION] : [PUBLISH_FUNCTION],
     args: [
       { index: 0, pred: { type: 'string-in', values: [...wasmNames] } },
       { index: 1, pred: { type: 'is-self' } },
@@ -85,7 +94,7 @@ export function upsertPublishKey(base: PolicyDoc, key: PublishKey, network: stri
     for (let n = 2; taken.has(signerId); n++) signerId = `${RULE_NAME}-${n}`;
     signers = [...signers, { ...decl, id: signerId }];
   }
-  rules.push(publishRule(key.registry, key.wasmNames, signerId));
+  rules.push(publishRule(key.registry, key.wasmNames, signerId, key.allowPublishHash));
 
   // Re-validate through perch's schema so a bad merge fails here, not on-chain.
   return parsePolicyDoc({ ...base, network, signers, rules });
