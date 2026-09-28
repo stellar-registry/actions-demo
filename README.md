@@ -3,10 +3,11 @@
 A working demo of the Stellar Registry release pipeline from
 [stellar-registry/actions](https://github.com/stellar-registry/actions), running
 on testnet. Merged changes collect in one release PR; merging that PR tags,
-builds, attests and publishes a Soroban contract to the Registry. The publish is signed by a CI key that can call
-`publish_hash` on one registry for one wasm name and nothing else. You
-provision that key with a [nido](https://nido.fyi) smart-account wallet from
-this repo's GitHub Pages dapp:
+builds, attests and publishes a Soroban contract to the Registry. The publish
+is signed by a CI key that can call `publish` on one registry for one wasm
+name and nothing else. You provision that key with a
+[nido](https://nido.fyi) smart-account wallet from this repo's GitHub Pages
+dapp:
 
 **https://stellar-registry.github.io/actions-demo/**
 
@@ -19,8 +20,8 @@ The repo is the proof for the SCF public-goods milestone
 | --- | --- |
 | Wrap the stellar-expert soroban build workflow | [`release.yml`](.github/workflows/release.yml) calls `contract-release.yml` from stellar-registry/actions, the registry's version of `stellar-expert/soroban-build-workflow`. It creates the GitHub release, submits the hash to stellar.expert contract validation and signs GitHub build provenance for the wasm. |
 | Build with `stellar scaffold build` | `contract-release.yml` runs `stellar scaffold build --package actions-demo --meta source_repo=…` then `stellar contract optimize`. `cargo_inherit` in the crate manifest writes the version into the wasm as `binver` meta. |
-| Publish new versions of already-published wasms to the Registry | `registry-publish.yml` verifies the attestation and `binver`, uploads the code and calls `publish_hash`. [Run 1](https://github.com/stellar-registry/actions-demo/actions/runs/36362820785) published `actions-demo` 0.1.0, which claimed the name. [Run 2](https://github.com/stellar-registry/actions-demo/actions/runs/36362983847) published 0.1.1 as a new version of the already-published wasm. |
-| Research keys that can only invoke `publish`, can live in a GitHub workflow, and carry no risky privileges | The CI key is a signer on a nido smart account whose policy document scopes it to `publish_hash` on one registry, for listed names, with the account itself as author. See [Security model](#security-model). The ML-DSA (post-quantum) variant is researched and proven on testnet, but the shared workflow can't sign it yet: [stellar-registry/actions#14](https://github.com/stellar-registry/actions/issues/14). |
+| Publish new versions of already-published wasms to the Registry | `registry-publish.yml` verifies the attestation and `binver`, then publishes with one smart-account-signed `publish`. A wasm over 60 KiB is uploaded first and bound with `publish_hash` instead ([stellar-registry/actions#15](https://github.com/stellar-registry/actions/pull/15)). [Run 1](https://github.com/stellar-registry/actions-demo/actions/runs/36362820785) published `actions-demo` 0.1.0, which claimed the name. [Run 2](https://github.com/stellar-registry/actions-demo/actions/runs/36362983847) published 0.1.1 as a new version; both used the earlier upload + `publish_hash` path. [Run 3](https://github.com/stellar-registry/actions-demo/actions/runs/36366464508) published 0.1.2 with a single `publish`. |
+| Research keys that can only invoke `publish`, can live in a GitHub workflow, and carry no risky privileges | The CI key is a signer on a nido smart account whose policy document scopes it to `publish` on one registry, for listed names, with the account itself as author. See [Security model](#security-model). The ML-DSA (post-quantum) variant is researched and proven on testnet, but the shared workflow can't sign it yet: [stellar-registry/actions#14](https://github.com/stellar-registry/actions/issues/14). |
 | A documented repository, tested in production | This README and the [testnet evidence](#testnet-evidence) below. |
 | Contract upgrades | Deferred by the milestone; out of scope here. |
 
@@ -31,14 +32,18 @@ flowchart LR
   A[merge PR] --> B[release-pr<br/>git-cliff bump]
   B -->|merge release PR| C[detect-releases<br/>tag actions-demo-vX.Y.Z]
   C --> D[contract-release<br/>scaffold build, optimize,<br/>GitHub release, attestation]
-  D --> E[registry-publish<br/>verify, upload, publish_hash]
+  D --> E[registry-publish<br/>verify, publish]
   E --> R[(Registry<br/>CDBL7MNO…)]
   K[CI key<br/>secrets.CI_PUBLISH_SECRET_KEY] -. signs as .-> N[nido account<br/>vars.AUTHOR_ADDRESS]
   N -. author of .-> R
 ```
 
-All four jobs are stellar-registry/actions reusable workflows, pinned to commit
-`7152f7c` the way [perch](https://github.com/stellar-registry/perch) pins them.
+All four jobs are stellar-registry/actions reusable workflows, pinned by
+commit the way [perch](https://github.com/stellar-registry/perch) pins them:
+`7152f7c` for release-pr, detect-releases and contract-release. registry-publish
+is pinned to `7076ce9`, the head of
+[stellar-registry/actions#15](https://github.com/stellar-registry/actions/pull/15);
+that pin moves to the merged commit before this repo's PR merges.
 
 Publishing is a manual decision. Every push to `main` runs `release-pr`, which
 keeps one `chore: release` PR open with the next version and changelog,
@@ -57,20 +62,26 @@ no GitHub App is needed.
 
 ### What signs, and what pays
 
-`registry-publish.yml` runs two transactions per release:
+`registry-publish.yml` publishes a wasm that fits in one transaction with a
+single **`registry.publish(name, author, wasm, version)`**. The registry
+uploads the bytes itself and calls `author.require_auth()`; the author is the
+nido smart account.
+- **Signing.** The `theahaco/stellar-cli` fork the workflow installs finds the
+  account's rule that lists the CI key. It signs the account's auth entry: an
+  OZ `AuthPayload` with one `External(ed25519 verifier, public key)` signer
+  over the rule-bound digest. That entry includes the wasm bytes, so the
+  signature covers the code itself.
+- **Checking.** The account's `__check_auth` verifies the signature through
+  perch's ed25519 verifier (`CA4G72A6…`). The perch interpreter policy on the
+  rule then checks the call.
+- **Paying.** The CI key's own classic account is the transaction source and
+  pays the fee.
 
-1. **`stellar contract upload`** installs the wasm. It is a plain host-function
-   operation authorized by the transaction source, the CI key's own account,
-   which also pays the fee. The smart account plays no part in it.
-2. **`registry.publish_hash(name, author, hash, version)`** binds the name and
-   version to the hash. The registry calls `author.require_auth()`, and the
-   author is the nido smart account. The `theahaco/stellar-cli` fork the
-   workflow installs finds the account's rule that lists the CI key and signs
-   the account's auth entry: an OZ `AuthPayload` with one
-   `External(ed25519 verifier, public key)` signer over the rule-bound digest.
-   The account's `__check_auth` verifies the signature through perch's ed25519
-   verifier (`CA4G72A6…`), then the perch interpreter policy on the rule checks
-   the call. The CI key's account is the source and fee payer here too.
+The wasm travels twice in that transaction, as the argument and inside the
+signed auth entry, and a Soroban transaction is capped at 132096 bytes. So a
+wasm over `publish_max_wasm_bytes` (60 KiB) takes the fallback: a
+`stellar contract upload` authorized by the transaction source alone, then
+`publish_hash` signed the same way. The demo contract is about 1 KB.
 
 So one ordinary Stellar key (`S…`/`G…`) does both jobs. It pays fees from its
 own balance (testnet XLM from friendbot) and it signs for the smart account only
@@ -93,7 +104,7 @@ the canonical JSON and its hash on-chain. The dapp reads the applied document,
 or nido's passkey-admin baseline on a first apply. It adds the key and one
 rule, and hands the `apply_doc` transaction to the nido wallet, where the
 passkey signs it. Here is the document now applied on testnet, key material
-shortened (read it with `get_applied_doc`; its hash is `1ae62204…`):
+shortened (read it with `get_applied_doc`; its hash is `3ba2021c…`):
 
 ```json
 {
@@ -101,7 +112,7 @@ shortened (read it with `get_applied_doc`; its hash is `1ae62204…`):
   "network": "Test SDF Network ; September 2015",
   "signers": [
     { "id": "admin", "verifier": "CACVGSAHYFBXY4LJKWW5B57LAAXHCZVDZOANUTYPLNV6HHQI4Q35EGMY", "key": "04aef679…a68930" },
-    { "id": "ci-publish", "verifier": "CA4G72A6XEIYPORY7UKZB3WFRJYX564UAQB5I7ASZMEAEST7PRHT4PSF", "key": "3982f5b7…149e6c" }
+    { "id": "ci-publish", "verifier": "CA4G72A6XEIYPORY7UKZB3WFRJYX564UAQB5I7ASZMEAEST7PRHT4PSF", "key": "eb313e74…5eb30c" }
   ],
   "rules": [
     { "name": "admin", "scope": { "type": "self-admin" }, "principals": { "type": "all", "signers": ["admin"] } },
@@ -109,7 +120,7 @@ shortened (read it with `get_applied_doc`; its hash is `1ae62204…`):
       "name": "ci-publish",
       "scope": { "type": "contract", "address": "CDBL7MNO7UI5OAAIC67UIWKQ4P3S6RVQSFCQXUHUW6TOFCXSYRPNHY4S" },
       "principals": { "type": "all", "signers": ["ci-publish"] },
-      "functions": ["publish_hash"],
+      "functions": ["publish"],
       "args": [
         { "index": 0, "pred": { "type": "string-in", "values": ["actions-demo"] } },
         { "index": 1, "pred": { "type": "is-self" } }
@@ -119,13 +130,14 @@ shortened (read it with `get_applied_doc`; its hash is `1ae62204…`):
 }
 ```
 
-`publish_hash` is the only function the rule allows, because it is the only call
-in the publish path that needs the account's signature. The upload needs none.
+`publish` is the only function the rule allows. The dapp adds `publish_hash`
+only when you tick "Also allow publish_hash", which is needed only if one of
+your wasms is over 60 KiB and goes through the upload fallback.
 
 ## Security model
 
-**What the key can do.** Sign `publish_hash` on the registry named in the rule,
-for a wasm name in the allow-list, with the nido account as author. It can also
+**What the key can do.** Sign `publish` on the registry named in the rule, for
+a wasm name in the allow-list, with the nido account as author. It can also
 spend its own account's XLM on fees.
 
 **What it can't do.** Each of these was checked on testnet by an
@@ -134,13 +146,13 @@ enforce-mode simulation signed by the live CI key. Run it yourself with
 submitted:
 
 ```text
-key GA4YF5NX3DZUNA3LH5TIBZKWZOAX5ZKL36IGDXY3QCYOBLUJCSPGZ6ZA holds rule #8 "ci-publish" on CD2BVQMPYCMNAWYFSFD234HEKJB6EH74EQWPRNVP3MVSKALH3ORS7MWM
+key GDVTCPTUVX5I2JBAF5CZH76UC7PQLRZVSSBBRTEE3IOV5HLLL2ZQYRWY holds rule #10 "ci-publish" on CD2BVQMPYCMNAWYFSFD234HEKJB6EH74EQWPRNVP3MVSKALH3ORS7MWM
 
-publish_hash, allowed name, author = account (expected: AUTHORIZED)
+publish, allowed name, author = account (expected: AUTHORIZED)
   -> AUTHORIZED
-publish_hash, another name
+publish, another name
   -> refused: Error(Auth, InvalidAction)
-publish (wasm bytes), not in the rule
+publish_hash (authorized only if the rule opted in for wasms over 60 KiB)
   -> refused: Error(Auth, InvalidAction)
 XLM transfer out of the account
   -> refused: Error(Auth, InvalidAction)
@@ -156,7 +168,9 @@ apply_doc (rewrite the account policy)
   is outside the rule's function list. (On this registry deployment that call
   fails in simulation with a storage error before auth is checked, so the
   scope check can't exercise it and doesn't list it.)
-- `publish_hash` binds a name and version to code, and deploys nothing, so
+- `publish_hash` is refused: the rule doesn't opt in, and the demo's wasm is
+  far below the 60 KiB fallback threshold.
+- `publish` binds a name and version to code, and deploys nothing, so
   publishing grants no authority over existing contracts.
 
 **If the secret leaks.** An attacker can publish a version of the listed names
@@ -166,7 +180,7 @@ on-chain with no matching GitHub release or build attestation, which is how
 consumers who check provenance tell it apart. Response: run the dapp again to
 rotate. `apply_doc` replaces the whole document, so the old key's signer entry
 is gone in the same transaction, and a rotated-out key has no rule to sign
-under. This repo's key was rotated that way three times during the demo. To
+under. This repo's key was rotated that way four times during the demo. To
 revoke without a replacement, remove the `ci-publish` rule on nido's policy
 page.
 
@@ -190,9 +204,10 @@ The dapp at https://stellar-registry.github.io/actions-demo/, with a nido
 testnet account. These screenshots are from the testnet run documented below;
 the secret is redacted.
 
-**1. Registry.** Enter the registry and the wasm names the key may publish. The
-page reads the registry's manager and the current version of each name, and
-resolves perch's ed25519 verifier.
+**1. Registry.** Enter the registry and the wasm names the key may publish,
+and tick `publish_hash` only if a wasm is over 60 KiB. The page reads the
+registry's manager and the current version of each name, and resolves perch's
+ed25519 verifier.
 
 ![Registry step](docs/img/1-registry.png)
 
@@ -210,7 +225,9 @@ ticking the checkbox removes it from the page.
 ![Key step](docs/img/3-key.png)
 
 **4. Review and apply.** The page shows how the new document differs from the
-current one; this run is a rotation, so one signer is swapped. "Approve in nido"
+current one. This run is a rotation that also moves the rule from
+`publish_hash` to `publish`, so a signer is swapped and the rule replaced.
+"Approve in nido"
 preflights `apply_doc` by simulation, then opens the account's
 `/sign/` page, where the passkey signs and nido's relayer submits.
 
@@ -229,15 +246,17 @@ and secret to set.
 | nido author account | [`CD2BVQMPYCMNAWYFSFD234HEKJB6EH74EQWPRNVP3MVSKALH3ORS7MWM`](https://stellar.expert/explorer/testnet/contract/CD2BVQMPYCMNAWYFSFD234HEKJB6EH74EQWPRNVP3MVSKALH3ORS7MWM) |
 | First `apply_doc` (adds `ci-publish`, local build of the dapp) | [`58ce402c…`](https://stellar.expert/explorer/testnet/tx/58ce402c190a3805a2e87b5beb022594f10a734800608b7ca62479fc1de5d019) |
 | Rotation from the live page (key used by the CI runs) | [`cdc673e5…`](https://stellar.expert/explorer/testnet/tx/cdc673e550ab39a671fef36a53f7a993d5ad4eb2b61e406def6b97611384b983) |
-| Later rotations from the live page (screenshot runs; the last is the current key) | [`d2bac458…`](https://stellar.expert/explorer/testnet/tx/d2bac4580dde98a6f6c3a39b385a216abddcb707c9bd93c98b99608dfc6534f3), [`cd19503a…`](https://stellar.expert/explorer/testnet/tx/cd19503a23ea621bc0ff6fef352034b03c9bb455a349493e2003c98efe2fbce2) |
+| Later rotations from the live page (screenshot runs) | [`d2bac458…`](https://stellar.expert/explorer/testnet/tx/d2bac4580dde98a6f6c3a39b385a216abddcb707c9bd93c98b99608dfc6534f3), [`cd19503a…`](https://stellar.expert/explorer/testnet/tx/cd19503a23ea621bc0ff6fef352034b03c9bb455a349493e2003c98efe2fbce2) |
+| Rule moved to `publish`-only, new key (current state) | [`0c4e880e…`](https://stellar.expert/explorer/testnet/tx/0c4e880e6cc4f04789fff511429f0e22fec569b340cf7679819b14d3880902f6) |
 | Release run 1: 0.1.0, claims the name | [run](https://github.com/stellar-registry/actions-demo/actions/runs/36362820785), [release](https://github.com/stellar-registry/actions-demo/releases/tag/actions-demo-v0.1.0), upload [`749f0319…`](https://stellar.expert/explorer/testnet/tx/749f031969e240b10001bc7e9cef983ebd60bd5507594f3e3782a895d12a8ef9), `publish_hash` [`1bf5bb7a…`](https://stellar.expert/explorer/testnet/tx/1bf5bb7a936c3bbe06ca1a3c5b7e23307a2d6efac92cc39913450c7eb8450055), wasm `711445f3…` |
 | Release run 2: 0.1.1, a new version of the published wasm | [run](https://github.com/stellar-registry/actions-demo/actions/runs/36362983847), [release](https://github.com/stellar-registry/actions-demo/releases/tag/actions-demo-v0.1.1), upload [`0b7c7735…`](https://stellar.expert/explorer/testnet/tx/0b7c77358239a2582c483390123b473c757220acd8ce92f4607c2e88aa3a908b), `publish_hash` [`ae473fa9…`](https://stellar.expert/explorer/testnet/tx/ae473fa904b6edb45b8c48b3420a2bd2e81dfc58fe4891477a5c18119b4b3ef5), wasm `f71d573b…` |
+| Release run 3: 0.1.2, one `publish` transaction (registry-publish at actions#15 head) | [run](https://github.com/stellar-registry/actions-demo/actions/runs/36366464508), [release](https://github.com/stellar-registry/actions-demo/releases/tag/actions-demo-v0.1.2), `publish` [`58ec8b59…`](https://stellar.expert/explorer/testnet/tx/58ec8b5907d4cc5a136e62c52bad1910e794fcfbac798271ddf100893eeda3f7), wasm `280a3a18…`, receipt `"method": "publish"` |
 
-Both runs executed from the PR branch before merge. For the proof, the release
-and Pages workflows temporarily triggered on that branch too; the trigger was
-removed again before review. The runs used a hand-bumped version and predate
-the release gate. On `main`, only a release PR merge or a manual run
-publishes. Each release carries the attested wasm and the
+All three runs executed from the PR branch before merge. For the proof, the
+release and Pages workflows temporarily triggered on that branch too, and for
+run 3 the release gate temporarily let this branch through; both were removed
+again before review. Each run used a hand-bumped version. On `main`, only a
+release PR merge or a manual run publishes. Each release carries the attested wasm and the
 `publish-receipt.json` that `registry-publish.yml` attaches.
 
 Check the registry yourself:
