@@ -172,8 +172,9 @@ table.settings { width: 100%; border-collapse: collapse; font-size: 13.5px; marg
 table.settings th, table.settings td { text-align: left; padding: 9px 8px; border-top: 1px solid var(--line-soft); vertical-align: top; }
 table.settings th { font-size: 12px; color: var(--mut); border-top: none; }
 table.settings td { overflow-wrap: anywhere; }
-table.settings td:first-child { width: 34%; }
-table.settings td:nth-child(2) { width: 16%; }
+/* table-layout: fixed sizes columns from the header row. */
+table.settings th:first-child { width: 36%; }
+table.settings th:nth-child(2) { width: 14%; }
 
 .status { font-size: 13.5px; color: var(--ink-soft); margin: 10px 0 0; min-height: 1.5em; }
 .status.err { color: var(--danger); font-weight: 600; }

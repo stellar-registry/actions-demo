@@ -40,8 +40,9 @@ const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
         <p>
           Your nido wallet adds a new key to its policy document. The key may call
           <code>publish_hash</code> on one registry, for the wasm names you list, with your
-          account as the author. It can't move funds, change the account, or publish anything
-          else. Put its secret in GitHub Actions and releases publish themselves.
+          account as the author. It can't publish anything
+          else, and it has no say over the account's funds or policy. Put its secret in GitHub
+          Actions and releases publish themselves.
         </p>
       </section>
 
@@ -129,8 +130,8 @@ const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
         <div class="step-head"><span class="step-num">4</span><h2>Review and apply</h2><span class="chip good hidden" id="apply-ok">applied</span></div>
         <div class="step-body">
           <p>
-            The updated policy document. nido shows the same change before your passkey
-            approves it.
+            The updated policy document, compared with the one the account has now. The nido
+            window then shows the <code>apply_doc</code> transaction and asks for your passkey.
           </p>
           <div id="diff"></div>
           <dl class="facts" id="doc-facts"></dl>
@@ -182,8 +183,10 @@ const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
           scoped to the registry. perch's interpreter policy on that rule checks every call: the
           function must be <code>publish_hash</code>, argument 0 (the name) must be one you listed,
           and argument 1 (the author) must be the account itself. If the secret leaks, the worst
-          case is an unwanted new version of your own wasm, visible on-chain, and you rotate by
-          running this page again. See the <a href="https://github.com/stellar-registry/actions-demo#security-model">security model</a>.
+          case is someone publishing a version of your listed wasm names with code you didn't
+          build. It shows up on-chain without a matching attested GitHub release, and running
+          this page again rotates the key out. See the
+          <a href="https://github.com/stellar-registry/actions-demo#security-model">security model</a>.
         </p>
       </section>
       <footer>
