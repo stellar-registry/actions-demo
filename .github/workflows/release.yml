@@ -33,7 +33,9 @@ name: Release
 
 on:
   push:
-    branches: [main]
+    # TEMP (reverted before review): also release from the PR branch so the
+    # pre-merge proof runs against testnet.
+    branches: [main, fm/registry-actions-demo-d11]
   # Recovery, publish only: re-run the on-chain half against an existing,
   # already-attested release asset (for example after an RPC failure). It never
   # rebuilds; integrity comes from `gh attestation verify`, not from git
