@@ -9,7 +9,7 @@ registry, for one wasm name. You set that key up with a
 [nido](https://nido.fyi) smart account from the dapp in this repo:
 https://stellar-registry.github.io/actions-demo/
 
-This is the deliverable for SCF milestone
+This part of the deliverable for SCF milestone
 [D11: Registry GH workflow to publish wasms and upgrade contracts](https://scf-public-goods-maintenance.github.io/projects/stellar-registry/#d11-registry-gh-workflow-to-publish-wasms-and-upgrade-contracts).
 
 ## D11 checklist
