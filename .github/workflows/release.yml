@@ -1,0 +1,227 @@
+name: Release
+
+# Version bump -> tag -> attested build -> registry publish, all through the
+# shared stellar-registry/actions reusable workflows (tracking `main`, the same
+# shape stellar-registry/perch runs):
+#
+#   1. `release-pr` (every push to main): git-cliff reads the conventional
+#      commits under crates/actions-demo and keeps ONE "chore: release" PR open
+#      with the next version + changelog, updated as more changes merge.
+#   2. `release-gate` + `detect-releases`: only when the push IS that release
+#      PR merging, tag `actions-demo-v<version>`. Merging the release PR is the
+#      release decision: changes accumulate in it, go out together as one
+#      version, and nothing else publishes (a version bumped by hand in a
+#      feature PR waits for the next release). A contract's FIRST release has
+#      no tag for git-cliff to bump from, so release-pr proposes nothing; run
+#      this workflow by hand on main (no publish_tag) to release it.
+#   3. `build`: contract-release.yml runs `stellar scaffold build` +
+#      `stellar contract optimize`, creates the GitHub release holding
+#      `actions-demo_v<version>.wasm`, submits the hash to stellar.expert
+#      contract validation and signs GitHub build provenance for the asset.
+#   4. `publish`: registry-publish.yml verifies that provenance and the wasm's
+#      `binver` meta, then binds name -> code -> author with one `publish`
+#      call (a wasm over 60 KiB falls back to upload + `publish_hash`). The
+#      author is a nido smart account (vars.AUTHOR_ADDRESS); the signer is the
+#      CI publish key (secrets.CI_PUBLISH_SECRET_KEY), which the account's
+#      policy document only lets call `publish` on vars.REGISTRY_CONTRACT_ID,
+#      for this wasm name, with itself as author. The same key pays the fees.
+#      See the README for the key and the policy.
+#
+# The build/publish jobs hang off detect-releases with `needs:` in the SAME
+# run, because tags pushed with the default GITHUB_TOKEN never trigger another
+# workflow run. No GitHub App is needed.
+#
+# Bootstrap: the target registry must be unmanaged (manager() == None), as the
+# testnet unverified registry is, so the first CI publish claims the wasm name
+# for the smart account. Every later version needs only the author's
+# signature, which is the CI key under its rule. Set up the key, the rule and
+# the repo vars/secret with the dapp in app/ (GitHub Pages), run this workflow
+# by hand on main for the first version, and merge release PRs after that.
+
+on:
+  push:
+    branches: [main]
+  # By hand, two modes:
+  # - no publish_tag, on main: release now. Tags and publishes any manifest
+  #   version without a tag (a contract's first release).
+  # - publish_tag: recovery, publish only. Re-runs the on-chain half against an
+  #   existing, already-attested release asset (for example after an RPC
+  #   failure). It never rebuilds; integrity comes from `gh attestation
+  #   verify`, not from git position.
+  workflow_dispatch:
+    inputs:
+      publish_tag:
+        description: "Existing release tag to (re)publish, e.g. actions-demo-v0.1.0. Empty = release untagged manifest versions from main."
+        required: false
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_tag != '' && format('release-dispatch-{0}', inputs.publish_tag) || format('release-{0}', github.ref) }}
+  cancel-in-progress: false
+
+jobs:
+  release-pr:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+      pull-requests: write
+    uses: stellar-registry/actions/.github/workflows/release-pr.yml@main
+    with:
+      contracts: '[{"name": "actions-demo"}]'
+
+  # Is this run a release? Yes when the push is the release PR (release-pr's
+  # `release/next` branch) merging (GitHub associates the merge, squash or
+  # rebased commit with its PR), or when the workflow is dispatched by hand on
+  # main without a publish_tag. Any other push to main only updates the
+  # release PR.
+  release-gate:
+    if: github.event_name == 'push' || inputs.publish_tag == ''
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      is_release: ${{ steps.check.outputs.is_release }}
+    steps:
+      - name: Release PR merge, or a manual release from main?
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = workflow_dispatch ]; then
+            if [ "$REF" != refs/heads/main ]; then
+              echo "::error::manual releases run from main only (got $REF)"
+              exit 1
+            fi
+            is_release=true
+            why="manual release from main"
+          else
+            n=$(gh api "repos/$REPO/commits/$SHA/pulls" \
+              --jq '[.[] | select(.head.ref == "release/next" and .merged_at != null)] | length')
+            if [ "$n" -gt 0 ]; then
+              is_release=true
+              why="release PR merged"
+            else
+              is_release=false
+              why="not the release PR: nothing to publish (release-pr updates the release PR)"
+            fi
+          fi
+          echo "is_release=$is_release" >>"$GITHUB_OUTPUT"
+          echo "release: $is_release ($why)" >>"$GITHUB_STEP_SUMMARY"
+
+  detect-releases:
+    needs: release-gate
+    if: needs.release-gate.outputs.is_release == 'true'
+    permissions:
+      contents: write # create + push the release tag
+    uses: stellar-registry/actions/.github/workflows/detect-releases.yml@main
+    with:
+      contracts: '[{"name": "actions-demo"}]'
+
+  # Which tags does this run publish? Emits the matrix the build and publish
+  # jobs fan out over; empty means nothing was released.
+  publish-plan:
+    needs: detect-releases
+    # !cancelled(): on a publish_tag dispatch detect-releases is skipped, which
+    # would otherwise skip everything downstream of this `needs:`.
+    if: >-
+      !cancelled() && (
+        (github.event_name == 'workflow_dispatch' && inputs.publish_tag != '') ||
+        needs.detect-releases.outputs.releases_created == 'true'
+      )
+    runs-on: ubuntu-latest
+    permissions: {}
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      any: ${{ steps.plan.outputs.any }}
+    env:
+      RELEASES: ${{ needs.detect-releases.outputs.releases }}
+      DISPATCH_TAG: ${{ inputs.publish_tag }}
+    steps:
+      - name: Build the publish matrix
+        id: plan
+        # Strict allow-list regex: the tag and the version parsed from it flow
+        # into the reusable workflows' `run:` shells.
+        run: |
+          set -euo pipefail
+          if [ -n "$DISPATCH_TAG" ]; then
+            if [[ "$DISPATCH_TAG" =~ ^(actions-demo)-v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+              matrix=$(jq -cn --arg p "${BASH_REMATCH[1]}" --arg t "$DISPATCH_TAG" --arg v "${BASH_REMATCH[2]}" \
+                '[{package: $p, tag: $t, version: $v}]')
+            else
+              echo "publish_tag '$DISPATCH_TAG' is not an actions-demo-v<semver> tag" >&2
+              exit 1
+            fi
+          else
+            matrix=$(jq -c '[.[] | select(.tag | test("^actions-demo-v[0-9]+\\.[0-9]+\\.[0-9]+$"))
+              | {package: .package_name, tag: .tag, version: .version}]' <<<"$RELEASES")
+          fi
+          n=$(jq length <<<"$matrix")
+          {
+            echo "matrix={\"include\":$matrix}"
+            echo "any=$([ "$n" -gt 0 ] && echo true || echo false)"
+          } >>"$GITHUB_OUTPUT"
+
+  # contract-release has no ref input and builds this run's sha, which is the
+  # commit detect-releases just tagged. A publish_tag dispatch never rebuilds;
+  # it republishes the existing asset instead.
+  build:
+    needs: publish-plan
+    if: >-
+      !cancelled() && needs.publish-plan.outputs.any == 'true' &&
+      (github.event_name == 'push' || inputs.publish_tag == '')
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.publish-plan.outputs.matrix) }}
+    permissions:
+      id-token: write
+      contents: write
+      attestations: write
+    uses: stellar-registry/actions/.github/workflows/contract-release.yml@main
+    with:
+      package: ${{ matrix.package }}
+      release_name: ${{ matrix.tag }}
+      release_description: >-
+        Attested build of ${{ matrix.package }} ${{ matrix.version }}, published
+        to the Stellar Registry on testnet by this repo's CI publish key (see
+        the attached publish receipt).
+    secrets:
+      release_token: ${{ secrets.GITHUB_TOKEN }}
+
+  publish:
+    needs: [publish-plan, build]
+    if: >-
+      !cancelled() && needs.publish-plan.outputs.any == 'true' && (
+        needs.build.result == 'success' ||
+        (github.event_name == 'workflow_dispatch' && inputs.publish_tag != '' && needs.build.result == 'skipped')
+      )
+    strategy:
+      fail-fast: false
+      # Every leg signs with the same key, which is also the tx source: parallel
+      # legs would collide on its sequence number.
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.publish-plan.outputs.matrix) }}
+    permissions:
+      contents: write # download the asset + attach the receipt
+      id-token: write # gh attestation verify
+    uses: stellar-registry/actions/.github/workflows/registry-publish.yml@main
+    with:
+      registry: ${{ vars.REGISTRY_CONTRACT_ID }}
+      author: ${{ vars.AUTHOR_ADDRESS }}
+      wasm_name: ${{ matrix.package }}
+      version: ${{ matrix.version }}
+      release_tag: ${{ matrix.tag }}
+      wasm_asset: ${{ matrix.package }}_v${{ matrix.version }}.wasm
+      network: testnet
+      # deploy_stateless exists only on content-addressed (perch-style)
+      # registries; the standard registry just records the publish.
+      deploy: false
+    secrets:
+      signing_key: ${{ secrets.CI_PUBLISH_SECRET_KEY }}
+      release_token: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,22 @@
+[package]
+name = "actions-demo"
+description = "Tiny contract the release workflow publishes to the Stellar Registry"
+version = "0.1.2"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# `stellar scaffold build` copies the crate metadata into the wasm, including
+# `binver` = this version, which registry-publish cross-checks before publishing.
+[package.metadata.stellar]
+cargo_inherit = true
+
+[lib]
+crate-type = ["lib", "cdylib"]
+doctest = false
+
+[dependencies]
+soroban-sdk = { workspace = true }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }

@@ -1,0 +1,24 @@
+{
+  "name": "actions-demo-app",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "check": "astro check",
+    "test": "vitest run",
+    "check-key": "node scripts/check-key-scope.mjs"
+  },
+  "dependencies": {
+    "@stellar-registry/perch": "^0.3.0",
+    "@stellar/stellar-sdk": "^16.3.0",
+    "astro": "^7.3.5",
+    "buffer": "^6.0.3"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.10",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.2"
+  }
+}

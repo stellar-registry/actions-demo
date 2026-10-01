@@ -1,0 +1,211 @@
+---
+import '../styles/nest.css';
+
+// BASE_URL is "/actions-demo" (no trailing slash) under this config.
+const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Registry Publish Key</title>
+    <meta
+      name="description"
+      content="Create a publish-only CI key for the Stellar Registry with your nido wallet: the key can publish new versions of your wasm and nothing else."
+    />
+    <link rel="icon" type="image/svg+xml" href={`${base}favicon.svg`} />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,600;0,9..144,800;1,9..144,800&family=Hanken+Grotesk:wght@400..800&family=JetBrains+Mono:wght@400..600&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div class="halo" style="width:520px;height:520px;top:-220px;right:-160px"></div>
+    <div class="halo" style="width:420px;height:420px;bottom:-200px;left:-180px;opacity:.3"></div>
+    <div class="wrap">
+      <header class="topbar">
+        <span class="wordmark">actions<b>·</b>demo</span>
+        <nav>
+          <span class="chip warn"><span class="dot"></span>testnet</span>
+          <a class="chip" href="https://github.com/stellar-registry/actions-demo">GitHub</a>
+        </nav>
+      </header>
+
+      <section class="hero rise">
+        <span class="chip acc">Stellar Registry · nido</span>
+        <h1>A CI key that can <em>only</em> publish.</h1>
+        <p>
+          Your nido wallet adds a new key to its policy document. The key may call
+          <code>publish</code> on one registry, for the wasm names you list, with your
+          account as the author. It can't publish anything
+          else, and it has no say over the account's funds or policy. Put its secret in GitHub
+          Actions and releases publish themselves.
+        </p>
+      </section>
+
+      <!-- 1 · registry -->
+      <section class="step" id="step-registry" data-state="active">
+        <div class="step-head"><span class="step-num">1</span><h2>Registry</h2><span class="chip good hidden" id="registry-ok">checked</span></div>
+        <div class="step-body">
+          <p>The registry the key may publish to, and the wasm names it may publish.</p>
+          <div class="field">
+            <label for="registry">Registry contract</label>
+            <input class="input mono" id="registry" spellcheck="false" autocomplete="off" />
+            <div class="hint">Defaults to the testnet <em>unverified</em> registry, which has no manager: the first publish of a name claims it.</div>
+          </div>
+          <div class="field">
+            <label for="names">Wasm names</label>
+            <input class="input mono" id="names" spellcheck="false" autocomplete="off" />
+            <div class="hint">Comma-separated. The release workflow publishes the crate name, <code>actions-demo</code>.</div>
+          </div>
+          <label class="check">
+            <input type="checkbox" id="allow-hash" />
+            <span>
+              Also allow <code>publish_hash</code>. Only needed for a wasm over 60 KiB, which is
+              too big to <code>publish</code> in one transaction; the workflow then uploads it
+              first and binds its hash.
+            </span>
+          </label>
+          <div class="row"><button class="btn acc" id="check-registry">Check registry</button></div>
+          <dl class="facts hidden" id="registry-facts" style="margin-top:16px"></dl>
+          <p class="status" id="registry-status"></p>
+        </div>
+      </section>
+
+      <!-- 2 · wallet -->
+      <section class="step" id="step-wallet" data-state="locked">
+        <div class="step-head"><span class="step-num">2</span><h2>nido wallet</h2><span class="chip good hidden" id="wallet-ok">connected</span></div>
+        <div class="step-body">
+          <p>
+            The smart account that will be the wasm's author. Its passkey approves the policy
+            change in a nido popup.
+          </p>
+          <div class="row">
+            <button class="btn acc" id="connect">Connect nido</button>
+            <a class="btn soft" id="new-nido" target="_blank" rel="noopener">No account? Create one</a>
+          </div>
+          <details style="margin-top:12px">
+            <summary>Wallet domain</summary>
+            <div class="field" style="margin-top:10px">
+              <input class="input mono" id="nido-base" spellcheck="false" autocomplete="off" />
+              <div class="hint">The hosted testnet wallet is <code>nido.fyi</code>. Use <code>http://localhost:4321</code> for a local nido.</div>
+            </div>
+          </details>
+          <dl class="facts hidden" id="wallet-facts" style="margin-top:16px"></dl>
+          <div class="alert warn hidden" id="first-apply">
+            <strong>This account has never applied a policy document.</strong> <code>apply_doc</code>
+            replaces the account's starting rule with the document. Afterwards your passkey keeps
+            admin rights over the account through the document's <code>admin</code> rule, the same
+            baseline nido's own policy pages use.
+          </div>
+          <div id="current-rules"></div>
+          <p class="status" id="wallet-status"></p>
+        </div>
+      </section>
+
+      <!-- 3 · key -->
+      <section class="step" id="step-key" data-state="locked">
+        <div class="step-head"><span class="step-num">3</span><h2>CI publish key</h2><span class="chip good hidden" id="key-ok">stored</span></div>
+        <div class="step-body">
+          <p>
+            An ordinary Stellar ed25519 key, generated in this browser. It signs the publish and
+            pays its fees, so the page funds it with test XLM.
+          </p>
+          <div class="row" id="gen-row"><button class="btn acc" id="generate">Generate key</button></div>
+          <div class="hidden" id="secret-box">
+            <div class="alert danger">
+              <strong>This is the only time the secret is shown.</strong> Copy it into a GitHub
+              Actions secret named <code>CI_PUBLISH_SECRET_KEY</code> now. This page never
+              stores it, and closing or reloading the page loses it.
+            </div>
+            <div class="secret">
+              <div class="label">Secret key · CI_PUBLISH_SECRET_KEY</div>
+              <div class="value" id="secret-value"></div>
+              <button class="btn sm soft" id="copy-secret">Copy secret</button>
+            </div>
+            <label class="check"><input type="checkbox" id="stored" /> I stored the secret in GitHub. Hide it.</label>
+          </div>
+          <dl class="facts hidden" id="key-facts" style="margin-top:4px"></dl>
+          <p class="status" id="key-status"></p>
+        </div>
+      </section>
+
+      <!-- 4 · review + apply -->
+      <section class="step" id="step-apply" data-state="locked">
+        <div class="step-head"><span class="step-num">4</span><h2>Review and apply</h2><span class="chip good hidden" id="apply-ok">applied</span></div>
+        <div class="step-body">
+          <p>
+            The updated policy document, compared with the one the account has now. The nido
+            window then shows the <code>apply_doc</code> transaction and asks for your passkey.
+          </p>
+          <div id="diff"></div>
+          <dl class="facts" id="doc-facts"></dl>
+          <details>
+            <summary>Full document (canonical JSON)</summary>
+            <pre class="doc" id="doc-json"></pre>
+          </details>
+          <div class="row" style="margin-top:16px"><button class="btn acc" id="apply">Approve in nido</button></div>
+          <p class="status" id="apply-status"></p>
+        </div>
+      </section>
+
+      <!-- 5 · result -->
+      <section class="step" id="step-done" data-state="locked">
+        <div class="step-head"><span class="step-num">5</span><h2>Wire up GitHub</h2></div>
+        <div class="step-body">
+          <p>The rule as it now sits on-chain, and the repo settings the release workflow reads.</p>
+          <dl class="facts" id="done-facts"></dl>
+          <div class="section-label">Repository settings</div>
+          <table class="settings">
+            <thead><tr><th>Name</th><th>Kind</th><th>Value</th></tr></thead>
+            <tbody id="settings"></tbody>
+          </table>
+          <div class="section-label">Or with the GitHub CLI</div>
+          <pre class="doc" id="gh-commands"></pre>
+          <p class="status">
+            Then merge changes to <code>main</code> as usual. The release workflow keeps one
+            <code>chore: release</code> PR open with the next version and changelog; merging that
+            PR tags, builds, attests and publishes it. A contract's first version is released by
+            running the Release workflow by hand on <code>main</code>.
+          </p>
+        </div>
+      </section>
+
+      <section class="explain">
+        <h2>How the pieces fit</h2>
+        <p>
+          The release workflow uses the shared
+          <a href="https://github.com/stellar-registry/actions">stellar-registry/actions</a>
+          workflows at <code>main</code>:
+        </p>
+        <ol>
+          <li><strong>release-pr</strong> proposes the next version from conventional commits.</li>
+          <li><strong>detect-releases</strong> tags <code>actions-demo-v&lt;version&gt;</code> when that version lands on main.</li>
+          <li><strong>contract-release</strong> builds with <code>stellar scaffold build</code>, creates the GitHub release, and signs build provenance.</li>
+          <li><strong>registry-publish</strong> verifies the provenance and the wasm's <code>binver</code>, then calls <code>publish</code> with the wasm as your account, signed by this key. A wasm over 60 KiB is uploaded first and bound with <code>publish_hash</code> instead.</li>
+        </ol>
+        <p>
+          The key is registered as <code>External(ed25519 verifier, public key)</code> on a rule
+          scoped to the registry. perch's interpreter policy on that rule checks every call: the
+          function must be <code>publish</code> (or <code>publish_hash</code>, if you allowed it),
+          argument 0 (the name) must be one you listed,
+          and argument 1 (the author) must be the account itself. If the secret leaks, the worst
+          case is someone publishing a version of your listed wasm names with code you didn't
+          build. It shows up on-chain without a matching attested GitHub release, and running
+          this page again rotates the key out. See the
+          <a href="https://github.com/stellar-registry/actions-demo#security-model">security model</a>.
+        </p>
+      </section>
+      <footer>
+        Built on <a href="https://nido.fyi">nido</a>, <a href="https://github.com/stellar-registry/perch">perch</a>
+        and the <a href="https://github.com/stellar-registry/contracts">Stellar Registry</a>. Testnet only.
+      </footer>
+    </div>
+    <script>
+      import '../lib/app';
+    </script>
+  </body>
+</html>
