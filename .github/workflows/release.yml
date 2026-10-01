@@ -1,7 +1,7 @@
 name: Release
 
 # Version bump -> tag -> attested build -> registry publish, all through the
-# shared stellar-registry/actions reusable workflows (pinned by sha, the same
+# shared stellar-registry/actions reusable workflows (tracking `main`, the same
 # shape stellar-registry/perch runs):
 #
 #   1. `release-pr` (every push to main): git-cliff reads the conventional
@@ -67,7 +67,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-    uses: stellar-registry/actions/.github/workflows/release-pr.yml@7152f7c264fcba286f01d372cb540d3b19c22834 # main 2026-09
+    uses: stellar-registry/actions/.github/workflows/release-pr.yml@main
     with:
       contracts: '[{"name": "actions-demo"}]'
 
@@ -120,7 +120,7 @@ jobs:
     if: needs.release-gate.outputs.is_release == 'true'
     permissions:
       contents: write # create + push the release tag
-    uses: stellar-registry/actions/.github/workflows/detect-releases.yml@7152f7c264fcba286f01d372cb540d3b19c22834 # main 2026-09
+    uses: stellar-registry/actions/.github/workflows/detect-releases.yml@main
     with:
       contracts: '[{"name": "actions-demo"}]'
 
@@ -183,7 +183,7 @@ jobs:
       id-token: write
       contents: write
       attestations: write
-    uses: stellar-registry/actions/.github/workflows/contract-release.yml@7152f7c264fcba286f01d372cb540d3b19c22834 # main 2026-09
+    uses: stellar-registry/actions/.github/workflows/contract-release.yml@main
     with:
       package: ${{ matrix.package }}
       release_name: ${{ matrix.tag }}
@@ -210,10 +210,7 @@ jobs:
     permissions:
       contents: write # download the asset + attach the receipt
       id-token: write # gh attestation verify
-    # PRE-MERGE PIN: head of stellar-registry/actions#15 (publish when the wasm
-    # fits, publish_hash only when too big). Move to the merged main sha of
-    # that PR before merging this repo's PR.
-    uses: stellar-registry/actions/.github/workflows/registry-publish.yml@7076ce9a2aef4d84910530def5a0b4d7395bb80b # actions#15 head
+    uses: stellar-registry/actions/.github/workflows/registry-publish.yml@main
     with:
       registry: ${{ vars.REGISTRY_CONTRACT_ID }}
       author: ${{ vars.AUTHOR_ADDRESS }}

@@ -38,12 +38,8 @@ flowchart LR
   N -. author of .-> R
 ```
 
-All four jobs are stellar-registry/actions reusable workflows, pinned by
-commit the way [perch](https://github.com/stellar-registry/perch) pins them:
-`7152f7c` for release-pr, detect-releases and contract-release. registry-publish
-is pinned to `7076ce9`, the head of
-[stellar-registry/actions#15](https://github.com/stellar-registry/actions/pull/15);
-that pin moves to the merged commit before this repo's PR merges.
+All four jobs are stellar-registry/actions reusable workflows, referenced at
+`@main` so the demo picks up fixes to the shared workflows as they land.
 
 Publishing is a manual decision. Every push to `main` runs `release-pr`, which
 keeps one `chore: release` PR open with the next version and changelog,
@@ -188,7 +184,8 @@ page.
 - GitHub Actions secret storage protects `CI_PUBLISH_SECRET_KEY`. The publish
   job only sees it as `STELLAR_ACCOUNT`/`STELLAR_SIGN_WITH_KEY`
   environment variables, never in argv.
-- The reusable workflows are pinned by commit sha. `registry-publish.yml`
+- The reusable workflows are referenced at `@main`, so a change merged there
+  reaches this repo's next release run. `registry-publish.yml`
   installs the `theahaco/stellar-cli` fork release by version tag without a
   checksum, which is an upstream follow-up.
 - The perch doc-compiler and interpreter the account trusts are
